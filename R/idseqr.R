@@ -40,8 +40,8 @@ filter_background <- function(reports,
     dimnames=list(samples, taxa))
 
   if (is.null(batches)) {
-    batches <- rep("batch0", nrow(counts_mat))
-    names(batches) <- sample_table$sample_name
+    batches <- rep("batch0", length(samples))
+    names(batches) <- samples
   }
 
   if(is.null(normalization)) {
