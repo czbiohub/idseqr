@@ -8,8 +8,9 @@ read_reports <- function(reports_dir,
       sample_name <- stringr::str_match(x, "^(.*)_\\d+_taxon_report.csv$")[,2]
       fname <- paste(reports_dir, "/", x, sep="")
       if (file.size(fname) == 0) return(NULL)
-      read.csv(fname, stringsAsFactors=F) %>%
-        dplyr::mutate(sample_name=sample_name)
+      cbind(sample_name=sample_name,
+            read.csv(fname, stringsAsFactors=F),
+            stringsAsFactors=F)
     }) %>%
     do.call(what=dplyr::bind_rows) %>%
     dplyr::filter(tax_id > 0) %>%
