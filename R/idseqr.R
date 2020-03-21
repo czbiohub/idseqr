@@ -27,6 +27,7 @@ filter_background <- function(reports,
                               # set to 1 to keep all hits
                               min_p_adj=.05,
                               # if NULL, normalizes by summing up reads in reports
+                              # recommend to use total_ercc_reads when appropriate
                               normalization=NULL) {
   samples <- unique(reports$sample_name)
   taxa <- unique(reports$name)
@@ -47,7 +48,7 @@ filter_background <- function(reports,
   }
 
   normalized_counts_mat <- counts_mat / normalization
-  sapply(unique(batches), function(b) {
+  sapply(unique(batches[controls]), function(b) {
     controls %>%
       .[batches[.] == b] ->
       batch_controls
@@ -81,26 +82,29 @@ filter_background <- function(reports,
     sample_name=reports$sample_name,
     name=reports$name,
     count=reports[,counts_column],
-    stringsAsFactors=F) %>%
-    cbind(batch=batches[.$sample_name],
-          norm=normalization[.$sample_name],
-          stringsAsFactors=F) ->
+    stringsAsFactors=F) ->
     counts_df
 
+  dplyr::inner_join(
+    data.frame(sample_name=controls,
+               batch=batches[controls],
+               norm=normalization[controls],
+               stringsAsFactors=F),
+    batch_bg_melted
+  ) %>%
   dplyr::left_join(
-    batch_bg_melted,
     counts_df %>%
       .[.$sample_name %in% controls,]
   ) %>%
     tidyr::replace_na(list(count=0)) %>%
-    dplyr::mutate(expected_bg_count=norm * background) %>%
+    dplyr::mutate(expected_bg_count=normalization[.$sample_name] * background) %>%
     dplyr::filter(expected_bg_count > 0) %>%
     {MASS::glm.nb(count ~ offset(expected_bg_count) - 1, data=., link=identity)} ->
     bg_glm
 
   counts_df %>%
-    dplyr::mutate(background=batch_bg[as.matrix(cbind(batch, name))]) %>%
-    dplyr::mutate(expected_bg_count=norm * background) %>%
+    dplyr::mutate(background=batch_bg[as.matrix(cbind(batches[sample_name], name))]) %>%
+    dplyr::mutate(expected_bg_count=normalization[sample_name] * background) %>%
     dplyr::mutate(p_val=pnbinom(count, size=bg_glm$theta,
                                 mu=expected_bg_count, lower.tail=FALSE)) %>%
     dplyr::group_by(sample_name) %>%
@@ -114,7 +118,7 @@ filter_background <- function(reports,
   stopifnot(counts_df$name == reports$name)
 
   ret <- cbind(reports,
-               counts_df[,c("p_val", "p_adj")],
+               counts_df[,c("expected_bg_count", "p_val", "p_adj")],
                stringsAsFactors=F)[keep,]
   attr(ret, "bg_glm") <- bg_glm
   ret
