@@ -25,8 +25,7 @@ filter_background <- function(reports,
                               # names should correspond to sample names
                               batches=NULL,
                               counts_column="nt_count",
-                              # set to 1 to keep all hits
-                              min_p_adj=.05,
+                              regularize_bg=TRUE,
                               # if NULL, normalizes by summing up reads in reports
                               # recommend to use total_ercc_reads when appropriate
                               normalization=NULL) {
@@ -65,9 +64,11 @@ filter_background <- function(reports,
     controls %>%
       .[batches[.] == b] ->
       batch_controls
-    normalized_counts_mat[batch_controls,,drop=FALSE] %>%
-      rbind(global_bg) %>%
-      Matrix::colMeans()
+    mat <- normalized_counts_mat[batch_controls,,drop=FALSE]
+    if (regularize_bg) {
+      mat <- rbind(mat, global_bg)
+    }
+    Matrix::colMeans(mat)
   }) %>%
     t() ->
     batch_bg
@@ -99,31 +100,33 @@ filter_background <- function(reports,
   ) %>%
     tidyr::replace_na(list(count=0)) %>%
     dplyr::mutate(expected_bg_count=normalization[.$sample_name] * background) %>%
-    dplyr::filter(expected_bg_count > 0) %>%
+    dplyr::filter(expected_bg_count > 0) ->
+    model_df
+
+  model_df %>%
     {MASS::glm.nb(count ~ offset(expected_bg_count) - 1, data=., link=identity)} ->
     bg_glm
+
+  theta <- MASS::theta.md(model_df$count, fitted(bg_glm), dfr=df.residual(bg_glm))
 
   counts_df %>%
     dplyr::mutate(background=batch_bg[as.matrix(cbind(batches[sample_name], name))]) %>%
     dplyr::mutate(expected_bg_count=normalization[sample_name] * background) %>%
-    dplyr::mutate(p_val=pnbinom(count, size=bg_glm$theta,
+    dplyr::mutate(p_val=pnbinom(count, size=theta,
                                 mu=expected_bg_count, lower.tail=FALSE)) %>%
     dplyr::group_by(sample_name) %>%
-    dplyr::mutate(p_adj=p.adjust(p_val, method="holm")) %>%
     dplyr::ungroup() ->
     counts_df
-
-  keep <- counts_df$p_adj <= min_p_adj
 
   stopifnot(counts_df$sample_name == reports$sample_name)
   stopifnot(counts_df$name == reports$name)
 
   ret <- cbind(reports,
-               counts_df[,c("expected_bg_count", "p_val", "p_adj")],
-               stringsAsFactors=F)[keep,]
+               counts_df[,c("expected_bg_count", "p_val")],
+               stringsAsFactors=F)
   attr(ret, "bg_glm") <- bg_glm
   ret
-}
+  }
 
 # filter to keep only the top n taxa per sample, for plotting
 filter_top_taxa <- function(reports, top_tax_per_sample=5, counts_column="nt_count") {
